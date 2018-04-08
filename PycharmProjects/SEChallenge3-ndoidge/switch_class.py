@@ -5,16 +5,9 @@ A basic class definition for a switch (or device). Allows you to connect to a sw
 this maintains session information such as cookies, so you do not have to parse this info yourself. At present these
 scripts assume you are using JSON to format message bodies etc. I will write extensions for XML when I can be bothered :-D
 
-To create a switch object, first define a dictionary in the following format:
-    <dict_name> = {
-        'protocol': 'http',
-        'ip': '127.0.0.1',
-        'port': '10180',
-        'username': '<username>',
-        'password': '<password>'
-    }
-
-Note: square brackets indicate variable names - you can choose what you like as long as they conform to Python variable naming standards
+The credentials() class is purely just some storage for all the arguments passed from the command line, to do some basic
+formatting and pass the information to the switch() class, so that it can create a switch object, login and allow you to
+run functions against that switch
 
 Then call the switch class, specifying the dictionary you just created, the username and password)
     <switch_name> = switch(<dict_name>)
@@ -39,26 +32,23 @@ As a final clean up, delete the created class
 
 import requests
 import json
+__author__ = 'ndoidge'
 
 class credentials():
 
     def __init__(self, ip, username, password, *args, **kwargs):
-        port = kwargs.get('port', '80')
-        protocol = kwargs.get('protocol', 'http')
+        #reads option arguments provided to the function, if specified use value given, else use default (80/ http)
+        port = kwargs.get('port')
+        proto = kwargs.get('proto')
 
-        self.url = '{0}://{1}:{2}'.format(protocol, ip, port)
+        self.url = '{0}://{1}:{2}'.format(proto, ip, port)
         self.username = username
         self.password = password
-        self.headers = kwargs.get('headers', '')
+        self.verify = kwargs.get('verify')
 
-
-
-
-#def myfunc(a, b, *args, **kwargs):
-#    c = kwargs.get('c', None)
-#    d = kwargs.get('d', None)
-    # etc
-#myfunc(a, b, c='nick', d='dog', ...)
+        #if we are disabling SSL cert checks, then disable warnings, else we get a shit-tonne of warning messages
+        if self.verify == False:
+            requests.packages.urllib3.disable_warnings()
 
 
 class switch():
@@ -66,57 +56,25 @@ class switch():
     def __init__(self, device):
         self.device = device
 
-        #Take in the host details to produce the URL for REST requests
-        self.url = '{0}://{1}:{2}'.format(device['protocol'], device['ip'], device['port'])
-
         #create the session object which allows each switch class a single session for all API calls
         self.session = requests.session()
+        requests.packages.urllib3.disable_warnings()
 
     def aaaLogin(self):
+
         body = {
             "aaaUser": {
                 "attributes": {
-                    "name": self.device['username'],
-                    "pwd": self.device['password']
+                    "name": self.device.username,
+                    "pwd": self.device.password
                 }
             }
         }
 
         # append the aaaLogin.json portion to create the full URL
-        full_url = self.url + '/api/aaaLogin.json'
+        url = '/api/aaaLogin.json'
 
-        #call the post, catch any connection errors
-        try:
-            response = self.session.post(full_url, json=body)
-        except requests.exceptions.ConnectionError:
-            print 'Unable to establish connectivity to the device: ' + self.device['ip']
-            return 0
-
-        if response.status_code != requests.codes.ok:
-            return 0
-        else:
-            return 1
-
-
-    def aaaLogout(self):
-
-        body = {
-		    'aaaUser' : {
-			    'attributes' : {
-				    'name' : self.device['username']
-			    }
-		    }
-	    }
-
-        #append the aaaLogout.json portion to create the full URL
-        full_url = self.url + '/api/aaaLogout.json'
-
-        #logout of the switch
-        try:
-            response = self.session.post(full_url, json=body)
-        except requests.exceptions.ConnectionError:
-            print 'Unable to establish connectivity to the device: ' + self.device['ip']
-            return False
+        response = self.post(url, body)
 
         if response.status_code != requests.codes.ok:
             return False
@@ -124,12 +82,43 @@ class switch():
             return True
 
 
+    def aaaLogout(self):
+
+        body = {
+		    'aaaUser' : {
+			    'attributes' : {
+				    'name' : self.device.username
+			    }
+		    }
+	    }
+
+        #append the aaaLogout.json portion to create the full URL
+        url = '/api/aaaLogout.json'
+
+        #logout of the switch
+        response = self.post(url, body)
+
+        if response.status_code != requests.codes.ok:
+            return False
+        else:
+            return True
+
+
+
     def get(self, url):
-        return self.session.get(self.url + url)
+        try:
+            response = self.session.get('{0}{1}'.format(self.device.url, url), verify=self.device.verify)
+        except requests.exceptions.RequestException:
+            print("Unable to connect to {0}{1}".format(self.device.url, url))
+        return response
 
 
-    def post(self, url, body, headers=''):
-        return self.session.post(self.url + url, json=body, headers=headers)
+    def post(self, url, body):
+        try:
+            response = self.session.post('{0}{1}'.format(self.device.url, url), json=body, verify=self.device.verify)
+        except requests.exceptions.RequestException:
+            print("Unable to connect to {0}{1}".format(self.device.url, url))
+        return response
 
 
     def is_feature_enabled(self, feature):
@@ -176,12 +165,12 @@ class switch():
             }
         ]
 
-        response = requests.post(self.url + url, json=payload, headers=myheaders, auth=(self.device['username'], self.device['password']))
+        response = requests.post(self.device.url + url, json=payload, headers=myheaders, auth=(self.device.username, self.device.password))
         if response.status_code == requests.codes.ok:
             print 'Feature ' + feature + ' is now enabled'
-            return 1
+            return True
         else:
-            return 0
+            return False
 
 
     def create_vlan(self, vlan, description):
